@@ -37,16 +37,16 @@ const SELL_SLIP_BPS = 10_000;
 const MIN_AGE_SLOTS = 8; // ignore curves younger than this: mostly bundled launches
 const TAPE_LEN = 20; // trades in the entry window
 const MIN_BUYS = 5; // buy trades in the window
-const MIN_BUYERS = 3; // distinct buying wallets in the window
-const MIN_NET_SOL = 0.8; // net SOL flowing in over the window
-const MIN_PRICE_UP = 0.03; // price rise over the window, at least 3%
+const MIN_BUYERS = 5; // distinct buying wallets in the window
+const MIN_NET_SOL = 2.0; // net SOL flowing in over the window
+const MIN_PRICE_UP = 0.08; // price rise over the window, at least 8%
 const MAX_PRICE_UP = 1.5; // skip curves that already ran too far in one window
 const NEAR_HIGH = 0.95; // price now at least 95% of the window high
-const STOP_LOSS = 0.85; // sell when value falls to 85% of cost
-const TAKE_PROFIT = 1.6; // sell when value reaches 160% of cost
+const STOP_LOSS = 0.88; // sell when value falls to 88% of cost
+const TAKE_PROFIT = 1.35; // sell when value reaches 135% of cost
 const TRAIL_ARM = 1.25; // trailing stop arms once value hits 125% of cost
 const TRAIL = 0.8; // then sell if value falls to 80% of its peak
-const MAX_HOLD_SLOTS = 3600; // hard time exit for momentum positions (~24 min)
+const MAX_HOLD_SLOTS = 1800; // hard time exit for momentum positions (~12 min)
 const PROBE_HOLD_SLOTS = 900; // probes exit much sooner
 const MAX_PROBES = 25; // probes are guardrail insurance, not the strategy: cap them
 const PROBE_COOLDOWN_SLOTS = 300; // at most one probe per 300 slots
@@ -226,6 +226,7 @@ await runBot({
     // 4. Entries: momentum buys on this batch's coins, first-seen order.
     for (const e of batch.events) {
       if (slots <= 0 || orders.length >= caps.max_orders_per_batch) break;
+      if (decided.size >= MAX_DECISIONS) break;
       if (e.event !== 'TradeEvent' && e.event !== 'CreateEvent') continue;
       const mint = e.mint;
       if (decided.has(mint) || state.positions.has(mint)) continue;
