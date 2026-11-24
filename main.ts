@@ -8,7 +8,8 @@
 // no coin earns a momentum entry and a position slot is free, it takes a small
 // 0.02 SOL probe on the freshest liquid curve so the run keeps cycling through
 // coins — the guardrails need round trips on at least 20 coins, and a bot that
-// waits for perfect setups can starve.
+// waits for perfect setups can starve. Probes are capped (25, paced one per
+// 300 slots): unpaced probes bled fees on the dev window.
 //
 // Deterministic by construction: no clock, no randomness, no environment reads;
 // iteration only over insertion-ordered maps fed by the batch stream, and any
@@ -35,9 +36,9 @@ const SELL_SLIP_BPS = 10_000;
 
 const MIN_AGE_SLOTS = 8; // ignore curves younger than this: mostly bundled launches
 const TAPE_LEN = 20; // trades in the entry window
-const MIN_BUYS = 4; // buy trades in the window
+const MIN_BUYS = 5; // buy trades in the window
 const MIN_BUYERS = 3; // distinct buying wallets in the window
-const MIN_NET_SOL = 0.4; // net SOL flowing in over the window
+const MIN_NET_SOL = 0.8; // net SOL flowing in over the window
 const MIN_PRICE_UP = 0.03; // price rise over the window, at least 3%
 const MAX_PRICE_UP = 1.5; // skip curves that already ran too far in one window
 const NEAR_HIGH = 0.95; // price now at least 95% of the window high
@@ -47,6 +48,8 @@ const TRAIL_ARM = 1.25; // trailing stop arms once value hits 125% of cost
 const TRAIL = 0.8; // then sell if value falls to 80% of its peak
 const MAX_HOLD_SLOTS = 3600; // hard time exit for momentum positions (~24 min)
 const PROBE_HOLD_SLOTS = 900; // probes exit much sooner
+const MAX_PROBES = 25; // probes are guardrail insurance, not the strategy: cap them
+const PROBE_COOLDOWN_SLOTS = 300; // at most one probe per 300 slots
 const MAX_DECISIONS = 60; // most coins the bot ever decides on in one run
 
 interface TapeTrade {
@@ -77,6 +80,8 @@ const open = new Map<Pubkey, OpenTrade>();
 // this set, so a position whose mint is in it counts as a probe. Declared
 // before runBot: the closure reads it while the replay runs.
 const probeMints = new Set<Pubkey>();
+let probeCount = 0;
+let lastProbeSlot = -1_000_000;
 
 function priceOf(curve: { virtual_quote_reserves: bigint; virtual_token_reserves: bigint }): number {
   const vt = Number(curve.virtual_token_reserves);
@@ -240,8 +245,15 @@ await runBot({
 
     // 5. Probe: when a slot is free and nothing earned a momentum entry, take
     // the freshest liquid curve with non-negative recent flow so the run keeps
-    // cycling coins toward the 20-coin guardrail.
-    if (slots > 0 && orders.length < caps.max_orders_per_batch && decided.size < MAX_DECISIONS) {
+    // cycling coins toward the 20-coin guardrail. Capped and paced: probes are
+    // insurance, and unpaced probes bled fees on the dev window.
+    if (
+      slots > 0 &&
+      orders.length < caps.max_orders_per_batch &&
+      decided.size < MAX_DECISIONS &&
+      probeCount < MAX_PROBES &&
+      state.slot - lastProbeSlot >= PROBE_COOLDOWN_SLOTS
+    ) {
       let best: Pubkey | null = null;
       let bestTrades = 0;
       for (const [mint, tape] of tapes) {
@@ -266,6 +278,8 @@ await runBot({
             orders.push({ side: 'buy', mint: best, quote_lamports: amount, max_slippage_bps: BUY_SLIP_BPS });
             free -= amount + tx;
             slots -= 1;
+            probeCount += 1;
+            lastProbeSlot = state.slot;
             // Mark the probe so its time exit is the short one (the entry
             // sync in step 2 picks the flag up from probeMints next batch).
             probeMints.add(best);
